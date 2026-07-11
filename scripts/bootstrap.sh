@@ -24,7 +24,10 @@ say() { printf '\n\033[1;36m>>> %s\033[0m\n' "$*"; }
 say "Checking toolchain"
 command -v git >/dev/null        || { echo "git is required"; exit 1; }
 command -v xcodebuild >/dev/null || { echo "Xcode command-line tools are required"; exit 1; }
-xcodebuild -version | head -1
+# `| head -1` closes the pipe early; some xcodebuild builds then abort on the
+# broken pipe (SIGPIPE), which pipefail turns into a failure. awk consumes all
+# output, so xcodebuild finishes cleanly.
+xcodebuild -version 2>/dev/null | awk 'NR==1'
 
 # 2. Fetch the DECtalk engine (proprietary — not committed) ------------------
 if [ ! -d upstream/src ]; then
