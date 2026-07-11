@@ -8,9 +8,6 @@ on:
     branches: [main]
   workflow_dispatch:
 
-permissions:
-  contents: write   # needed to create Releases on tags
-
 jobs:
   build:
     name: Build, test & package (macOS)
@@ -34,17 +31,21 @@ jobs:
           brew install xcodegen
           xcodegen generate
 
-      # --- macOS app (unsigned) ---
-      - name: Build macOS app (unsigned)
+      # --- macOS app → unsigned DMG (the signed+notarized DMG is cut locally
+      #     with scripts/release.sh, since CI has no Developer ID cert) ---
+      - name: Build macOS app (unsigned) → DMG
         run: |
           xcodebuild -project DECtalk.xcodeproj -scheme DECtalkApp-macOS \
             -configuration Release -derivedDataPath build/macos \
             CODE_SIGNING_ALLOWED=NO CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM="" build
-          cd build/macos/Build/Products/Release
-          zip -qry "$GITHUB_WORKSPACE/DECtalk-macOS.zip" DECtalk.app
+          stage="$(mktemp -d)"
+          cp -R build/macos/Build/Products/Release/DECtalk.app "$stage/"
+          ln -s /Applications "$stage/Applications"
+          hdiutil create -volname DECtalk -srcfolder "$stage" -ov -format UDZO \
+            "$GITHUB_WORKSPACE/DECtalk-macOS-unsigned.dmg"
 
       # --- iOS .ipa (unsigned — sign with Sideloadly/AltStore on install) ---
-      - name: Build iOS app (unsigned) and package .ipa
+      - name: Build iOS app (unsigned) → .ipa
         run: |
           xcodebuild -project DECtalk.xcodeproj -scheme DECtalkApp-iOS \
             -configuration Release -sdk iphoneos -derivedDataPath build/ios \
@@ -58,16 +59,5 @@ jobs:
         with:
           name: DECtalk-builds
           path: |
-            DECtalk-macOS.zip
+            DECtalk-macOS-unsigned.dmg
             DECtalk-iOS-unsigned.ipa
-
-      # --- On a version tag, publish a Release with the downloadable builds ---
-      - name: Publish Release (tags only)
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "${GITHUB_REF_NAME}" \
-            --title "DECtalk ${GITHUB_REF_NAME}" \
-            --notes "Unsigned builds. iOS: install the .ipa with Sideloadly or AltStore (they re-sign with your Apple ID). macOS: unsigned .app (right-click → Open, or self-sign)." \
-            DECtalk-macOS.zip DECtalk-iOS-unsigned.ipa

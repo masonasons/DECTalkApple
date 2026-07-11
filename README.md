@@ -93,19 +93,23 @@ instant you swipe.
 
 ## Downloads
 
-Every push builds the apps and uploads them as workflow **artifacts**; every
-`v*` **tag** publishes a **[Release](../../releases)** with permanent downloads:
+Each **[Release](../../releases)** has:
 
+- **`DECtalk.dmg`** — macOS app, **signed with Developer ID + notarized**, opens
+  cleanly (drag to Applications).
 - **`DECtalk-iOS-unsigned.ipa`** — install with **Sideloadly** or **AltStore**,
-  which re-sign it with your own Apple ID on install (no cert needed from CI).
-- **`DECtalk-macOS.zip`** — unsigned `.app` (right-click → Open the first time, or
-  self-sign with `codesign --force --deep --sign - DECtalk.app`).
+  which re-sign it with your own Apple ID on install.
 
-Cut a release with:
+Cut a release (builds the signed DMG + unsigned IPA, tags, publishes to GitHub
+and to `brynify.me/dectalk`):
 
 ```sh
-git tag v0.1.0 && git push origin v0.1.0
+./scripts/release.sh v0.1.2
 ```
+
+Releasing is local because the macOS signing needs the Developer ID identity in
+your keychain (and `Signing/asc.env` for notarization). `scripts/package.sh`
+builds just the DMG; without a Developer ID cert it makes an unsigned one.
 
 ## Signed ad-hoc distribution (iOS)
 
@@ -138,10 +142,10 @@ above.
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs on macOS: bootstraps, runs `swift test`, builds
-both apps **unsigned**, packages the iOS `.ipa` + macOS `.zip`, and (on tags)
-attaches them to a GitHub Release. CI never needs your signing certificate — the
-iOS build is unsigned and re-signed at install time by the sideloading tool.
+`.github/workflows/ci.yml` runs on macOS for every push/PR/tag: bootstraps, runs
+`swift test`, and builds both apps **unsigned** — uploading the iOS `.ipa` and an
+unsigned macOS `.dmg` as workflow artifacts. CI never needs a signing
+certificate; the signed release DMG is cut locally (`scripts/release.sh`).
 
 ## Notes & limits
 
