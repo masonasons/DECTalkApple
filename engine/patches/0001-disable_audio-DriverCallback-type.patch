@@ -1,0 +1,19 @@
+Fix a genuine type bug that modern clang (Xcode 26) rejects.
+
+nt/disable_audio.c defines DriverCallback() with its hDev parameter typed
+HANDLE16 (unsigned short), but the prototype in nt/linux_audio.h types it
+HWAVEOUT (void*, via nt/playaudd.h). Older compilers tolerated the pointer
+vs. short mismatch; clang errors with "conflicting types for 'DriverCallback'".
+The parameter is unused (audio is disabled), so match the definition to the
+prototype. This is the only genuine source fix needed to build on Apple.
+
+--- a/src/dapi/src/nt/disable_audio.c
++++ b/src/dapi/src/nt/disable_audio.c
+@@ -101,7 +101,7 @@
+ }
+
+-BOOL16 DriverCallback(void (*dwCallBack)(void *, unsigned int, unsigned int, long int, long int), UINT16 uFlags, HANDLE16 hDev,
++BOOL16 DriverCallback(void (*dwCallBack)(void *, unsigned int, unsigned int, long int, long int), UINT16 uFlags, HWAVEOUT hDev,
+                       WORD wMsg, DWORD dwUser, long dwParam1,
+                       long dwParam2)
+ {

@@ -1,0 +1,92 @@
+name: DECtalk
+options:
+  bundleIdPrefix: com.dectalkapple
+  deploymentTarget:
+    macOS: "13.0"
+    iOS: "16.0"
+  createIntermediateGroups: true
+
+packages:
+  DECtalkKit:
+    path: .
+
+settings:
+  base:
+    MARKETING_VERSION: "0.1"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.9"
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: 9QBYDAX396
+
+# Shared building blocks applied to the concrete per-platform targets below.
+targetTemplates:
+  App:
+    type: application
+    sources:
+      - Apps/DECtalkApp
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.dectalkapple.app
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_NAME: DECtalk
+        INFOPLIST_KEY_CFBundleDisplayName: DECtalk
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
+    dependencies:
+      - package: DECtalkKit
+        product: DECtalkKit
+
+  Extension:
+    type: app-extension
+    sources:
+      - Apps/DECtalkVoiceExtension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.dectalkapple.app.voice
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Apps/DECtalkVoiceExtension/Info.plist
+        PRODUCT_NAME: DECtalkVoice
+    dependencies:
+      - package: DECtalkKit
+        product: DECtalkKit
+
+targets:
+  # ── macOS ──
+  DECtalkVoice-macOS:
+    templates: [Extension]
+    platform: macOS
+    settings:
+      base:
+        CODE_SIGN_ENTITLEMENTS: Apps/DECtalkVoiceExtension/DECtalkVoiceExtension.entitlements
+
+  DECtalkApp-macOS:
+    templates: [App]
+    platform: macOS
+    settings:
+      base:
+        CODE_SIGN_ENTITLEMENTS: Apps/DECtalkApp/DECtalkApp.entitlements
+    dependencies:
+      - target: DECtalkVoice-macOS
+        embed: true
+        codeSign: true
+
+  # ── iOS ──
+  DECtalkVoice-iOS:
+    templates: [Extension]
+    platform: iOS
+    settings:
+      base:
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_ENTITLEMENTS: Apps/DECtalkVoiceExtension/DECtalkVoiceExtension-iOS.entitlements
+
+  DECtalkApp-iOS:
+    templates: [App]
+    platform: iOS
+    settings:
+      base:
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_ENTITLEMENTS: Apps/DECtalkApp/DECtalkApp-iOS.entitlements
+    dependencies:
+      - target: DECtalkVoice-iOS
+        embed: true
+        codeSign: true

@@ -1,0 +1,56 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build & test (macOS)
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select latest Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Bootstrap (fetch engine, build xcframework, install dictionary)
+        run: ./scripts/bootstrap.sh --no-xcodeproj
+
+      - name: Run engine + kit tests
+        run: swift test
+
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Build macOS app (unsigned)
+        run: |
+          xcodebuild -project DECtalk.xcodeproj -scheme DECtalkApp-macOS \
+            -configuration Release -derivedDataPath build/ci-macos \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM="" \
+            build
+
+      - name: Build iOS app (unsigned, simulator SDK)
+        run: |
+          xcodebuild -project DECtalk.xcodeproj -scheme DECtalkApp-iOS \
+            -configuration Release -sdk iphonesimulator -derivedDataPath build/ci-ios \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM="" \
+            build
+
+      - name: Package macOS app artifact
+        run: |
+          cd build/ci-macos/Build/Products/Release
+          zip -ry "$GITHUB_WORKSPACE/DECtalk-macOS.zip" DECtalk.app
+
+      - name: Upload macOS app
+        uses: actions/upload-artifact@v4
+        with:
+          name: DECtalk-macOS-unsigned
+          path: DECtalk-macOS.zip

@@ -1,0 +1,23 @@
+# --- Proprietary DECtalk sources & derived artifacts (NOT redistributable) ---
+# Fetched/built by scripts/bootstrap.sh, never committed.
+upstream/
+engine/build/
+engine/DECtalkEngine.xcframework/
+Sources/DECtalkKit/Resources/*.dic
+
+# --- Generated Xcode project (produced from project.yml by xcodegen) ---
+DECtalk.xcodeproj/
+
+# --- Build outputs ---
+build/
+.build/
+DerivedData/
+*.xcframework
+*.ipa
+*.dSYM/
+
+# --- Xcode / macOS cruft ---
+.DS_Store
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
