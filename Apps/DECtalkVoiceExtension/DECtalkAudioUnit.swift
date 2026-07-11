@@ -24,6 +24,11 @@ public final class DECtalkAudioUnit: AVSpeechSynthesisProviderAudioUnit {
     private var volume: Float32 = 1.0
     private let mutex = DispatchSemaphore(value: 1)
 
+    // VoiceOver sends empty/break-only requests during normal use (spacers,
+    // pauses between elements). Only the very first request is treated as a voice
+    // preview and given a spoken sample; later empty requests stay silent.
+    private var requestCount = 0
+
     // DECtalk emits 11025 Hz; 22050 avoids DAC aliasing (per TGSpeechBox notes).
     private let asbdRate: Double = 22050
 
@@ -101,10 +106,12 @@ public final class DECtalkAudioUnit: AVSpeechSynthesisProviderAudioUnit {
         // Split at <break> boundaries so we can render each spoken segment and
         // join them with REAL silence PCM — DECtalk produces no usable pause for
         // a trailing period, so we insert the silence ourselves.
+        requestCount += 1
         var segments = Self.segments(from: ssml, honorPauses: settings.honorVoiceOverPauses)
-        if segments.allSatisfy({ $0.text.isEmpty }) {
-            // VoiceOver preview / empty request — say a short sample.
-            segments = [(text: "This is DECtalk.", silenceMs: segments.first?.silenceMs ?? 0)]
+        if segments.allSatisfy({ $0.text.isEmpty }) && requestCount == 1 {
+            // Only the first empty request is a voice preview — speak a sample.
+            // Later empty requests (spacers/breaks) must NOT insert spoken text.
+            segments = [(text: "This is DECtalk.", silenceMs: 0)]
         }
 
         func silence(_ ms: Int) -> [Int16] {
@@ -120,6 +127,9 @@ public final class DECtalkAudioUnit: AVSpeechSynthesisProviderAudioUnit {
                 int16 += silence(seg.silenceMs)   // insert the pause exactly where the break is
             }
         }
+        // A truly empty utterance still needs a frame so the render block can
+        // complete and VoiceOver advances to the next item.
+        if int16.isEmpty { int16 = silence(10) }
 
         var floats = [Float32](repeating: 0, count: int16.count)
         int16.withUnsafeBufferPointer { src in
