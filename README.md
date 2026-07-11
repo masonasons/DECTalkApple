@@ -107,6 +107,35 @@ Cut a release with:
 git tag v0.1.0 && git push origin v0.1.0
 ```
 
+## Signed ad-hoc distribution (iOS)
+
+For installing on your own registered devices with a **real signature** (no
+per-device re-signing by the end user), there's a local ad-hoc pipeline modeled
+on OTA distribution:
+
+```sh
+source Signing/asc.env                                   # ASC key + config (gitignored)
+swift scripts/asc_tool.swift register <UDID> "<name>"    # register a device (once)
+echo "<device-resource-id>  <UDID>  <name>" >> Signing/.devices   # pin it
+./scripts/adhoc.sh https://your-host.example/dectalk     # build → re-sign → OTA bundle
+./scripts/publish.sh                                     # (optional) upload to your web server
+```
+
+`adhoc.sh` refreshes the ad-hoc provisioning profiles (app **and** the voice
+extension) for the pinned devices, builds the app, **re-signs inside-out**
+(nested bundle → extension → app) with your `iPhone/Apple Distribution` identity,
+and writes `dist/ota/`: `DECtalk.ipa`, an itms-services `manifest.plist`, and an
+`index.html` install page. Host all three over HTTPS and open the page on a
+registered device to install over the air.
+
+All signing material lives in `Signing/` and is **git-ignored** (never committed):
+the ASC API key (`.p8`), the distribution profiles (`.mobileprovision`), and the
+pinned device list. `scripts/asc_tool.swift` is a small App Store Connect API
+client (register devices, generate profiles) — no secrets in it, so it's tracked.
+
+This is separate from — and complements — the unsigned GitHub-release builds
+above.
+
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs on macOS: bootstraps, runs `swift test`, builds

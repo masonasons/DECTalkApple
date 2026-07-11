@@ -16,6 +16,16 @@ DerivedData/
 *.ipa
 *.dSYM/
 
+# --- Signing material (certs, keys, provisioning profiles) — NEVER commit ---
+Signing/
+*.p8
+*.p12
+*.mobileprovision
+*.cer
+
+# --- Ad-hoc OTA output ---
+dist/
+
 # --- Xcode / macOS cruft ---
 .DS_Store
 xcuserdata/
