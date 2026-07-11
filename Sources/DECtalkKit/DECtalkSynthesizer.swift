@@ -90,8 +90,30 @@ public final class DECtalkSynthesizer: @unchecked Sendable {
             collector.samples.append(contentsOf: UnsafeBufferPointer(start: samples, count: count))
         }
 
-        _ = text.withCString { dtk_speak(engine, $0, callback, ctx) }
+        _ = Self.engineASCII(text).withCString { dtk_speak(engine, $0, callback, ctx) }
         return collector.samples
+    }
+
+    /// The DECtalk engine is ASCII/Latin-1 era: raw multi-byte UTF-8 (curly
+    /// quotes, em-dashes, accented letters, …) is spoken byte-by-byte as symbol
+    /// names ("circumflex"). Map common “smart” punctuation to ASCII, strip
+    /// diacritics, and drop anything else non-ASCII before handing text over.
+    static func engineASCII(_ text: String) -> String {
+        let replacements: [Character: String] = [
+            "\u{2018}": "'",  "\u{2019}": "'",  "\u{201A}": "'", "\u{201B}": "'",   // ‘ ’ ‚ ‛
+            "\u{201C}": "\"", "\u{201D}": "\"", "\u{201E}": "\"", "\u{201F}": "\"", // “ ” „ ‟
+            "\u{00AB}": "\"", "\u{00BB}": "\"",                                      // « »
+            "\u{2013}": "-",  "\u{2014}": " - ", "\u{2015}": "-", "\u{2212}": "-",  // – — ― −
+            "\u{2022}": "-",  "\u{00B7}": ".",   "\u{2026}": "...",                 // • · …
+            "\u{00A0}": " ",  "\u{2007}": " ",   "\u{2009}": " ", "\u{202F}": " ",  // no-break/thin spaces
+            "\u{FEFF}": "",                                                          // BOM / zero-width no-break
+        ]
+        var out = ""
+        out.reserveCapacity(text.count)
+        for ch in text { out += replacements[ch].map { $0 } ?? String(ch) }
+        // Fold accents (café -> cafe), then drop any remaining non-ASCII.
+        out = out.folding(options: .diacriticInsensitive, locale: Locale(identifier: "en_US"))
+        return String(String.UnicodeScalarView(out.unicodeScalars.map { $0.isASCII ? $0 : " " }))
     }
 
     /// Renders `text` with the given settings applied. Selects the base voice,

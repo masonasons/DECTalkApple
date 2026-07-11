@@ -147,6 +147,16 @@ case "adhoc":
     try! prof.write(to: URL(fileURLWithPath: out))
     print("wrote \(out) with \(deviceIds.count) device(s)")
 
+case "certs":
+    // List certificates (id<TAB>type<TAB>name).
+    let (s, j) = api("GET", "/v1/certificates?limit=200")
+    if s != 200 { fail("list certs failed (\(s))", j) }
+    for c in (j["data"] as? [[String: Any]]) ?? [] {
+        let id = c["id"] as? String ?? ""
+        let a = c["attributes"] as? [String: Any] ?? [:]
+        print("\(id)\t\(a["certificateType"] as? String ?? "")\t\(a["displayName"] as? String ?? "")")
+    }
+
 case "bundles":
     // List bundle IDs (id<TAB>identifier<TAB>name). Optional prefix filter arg.
     let q = args.count >= 2 ? "&filter[identifier]=\(args[1])" : ""
