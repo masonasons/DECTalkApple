@@ -91,11 +91,28 @@ multi-part announcements and continuous reading. Pauses *between single items wh
 swiping* aren't possible for any provider — VoiceOver cancels the utterance the
 instant you swipe.
 
+## Downloads
+
+Every push builds the apps and uploads them as workflow **artifacts**; every
+`v*` **tag** publishes a **[Release](../../releases)** with permanent downloads:
+
+- **`DECtalk-iOS-unsigned.ipa`** — install with **Sideloadly** or **AltStore**,
+  which re-sign it with your own Apple ID on install (no cert needed from CI).
+- **`DECtalk-macOS.zip`** — unsigned `.app` (right-click → Open the first time, or
+  self-sign with `codesign --force --deep --sign - DECtalk.app`).
+
+Cut a release with:
+
+```sh
+git tag v0.1.0 && git push origin v0.1.0
+```
+
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs on macOS: bootstraps, runs `swift test`, and
-builds both apps **unsigned** (CI can't device-sign). The macOS app is uploaded
-as a build artifact.
+`.github/workflows/ci.yml` runs on macOS: bootstraps, runs `swift test`, builds
+both apps **unsigned**, packages the iOS `.ipa` + macOS `.zip`, and (on tags)
+attaches them to a GitHub Release. CI never needs your signing certificate — the
+iOS build is unsigned and re-signed at install time by the sideloading tool.
 
 ## Notes & limits
 

@@ -3,13 +3,17 @@ name: Build
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: write   # needed to create Releases on tags
+
 jobs:
   build:
-    name: Build & test (macOS)
+    name: Build, test & package (macOS)
     runs-on: macos-15
 
     steps:
@@ -30,27 +34,40 @@ jobs:
           brew install xcodegen
           xcodegen generate
 
+      # --- macOS app (unsigned) ---
       - name: Build macOS app (unsigned)
         run: |
           xcodebuild -project DECtalk.xcodeproj -scheme DECtalkApp-macOS \
-            -configuration Release -derivedDataPath build/ci-macos \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM="" \
-            build
+            -configuration Release -derivedDataPath build/macos \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM="" build
+          cd build/macos/Build/Products/Release
+          zip -qry "$GITHUB_WORKSPACE/DECtalk-macOS.zip" DECtalk.app
 
-      - name: Build iOS app (unsigned, simulator SDK)
+      # --- iOS .ipa (unsigned — sign with Sideloadly/AltStore on install) ---
+      - name: Build iOS app (unsigned) and package .ipa
         run: |
           xcodebuild -project DECtalk.xcodeproj -scheme DECtalkApp-iOS \
-            -configuration Release -sdk iphonesimulator -derivedDataPath build/ci-ios \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM="" \
-            build
+            -configuration Release -sdk iphoneos -derivedDataPath build/ios \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" build
+          mkdir -p payload/Payload
+          cp -R build/ios/Build/Products/Release-iphoneos/DECtalk.app payload/Payload/
+          (cd payload && zip -qry "$GITHUB_WORKSPACE/DECtalk-iOS-unsigned.ipa" Payload)
 
-      - name: Package macOS app artifact
-        run: |
-          cd build/ci-macos/Build/Products/Release
-          zip -ry "$GITHUB_WORKSPACE/DECtalk-macOS.zip" DECtalk.app
-
-      - name: Upload macOS app
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: DECtalk-macOS-unsigned
-          path: DECtalk-macOS.zip
+          name: DECtalk-builds
+          path: |
+            DECtalk-macOS.zip
+            DECtalk-iOS-unsigned.ipa
+
+      # --- On a version tag, publish a Release with the downloadable builds ---
+      - name: Publish Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "DECtalk ${GITHUB_REF_NAME}" \
+            --notes "Unsigned builds. iOS: install the .ipa with Sideloadly or AltStore (they re-sign with your Apple ID). macOS: unsigned .app (right-click → Open, or self-sign)." \
+            DECtalk-macOS.zip DECtalk-iOS-unsigned.ipa
