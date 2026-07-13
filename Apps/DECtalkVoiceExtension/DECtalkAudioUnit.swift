@@ -118,15 +118,17 @@ public final class DECtalkAudioUnit: AVSpeechSynthesisProviderAudioUnit {
         var int16: [Int16] = []
         for seg in segments {
             if !seg.text.isEmpty {
-                int16 += synth.render(seg.text, applying: settings, speaker: speaker)
+                // Trim the engine's own padding off each chunk — see trimmed(_:).
+                int16 += Self.trimmed(synth.render(seg.text, applying: settings, speaker: speaker))
             }
             if seg.silenceMs > 0 {
                 int16 += silence(seg.silenceMs)   // insert the pause exactly where the break is
             }
         }
         // A truly empty utterance still needs a frame so the render block can
-        // complete and VoiceOver advances to the next item.
-        if int16.isEmpty { int16 = silence(10) }
+        // complete and VoiceOver advances to the next item. A short tail also
+        // keeps the last sample from being clipped by the render block.
+        int16 += silence(10)
 
         var floats = [Float32](repeating: 0, count: int16.count)
         int16.withUnsafeBufferPointer { src in
@@ -184,6 +186,29 @@ public final class DECtalkAudioUnit: AVSpeechSynthesisProviderAudioUnit {
             self.mutex.signal()
             return noErr
         }
+    }
+
+    // MARK: - Audio helpers
+
+    /// Strips the silence DECtalk pads onto every render call.
+    ///
+    /// The engine bakes roughly 340 ms of trailing silence into each `render`,
+    /// regardless of what it was asked to say. That is invisible for one long
+    /// utterance, but VoiceOver splits digit strings into one chunk per digit —
+    /// a 10-digit phone number is 10+ render calls, so the padding stacks up into
+    /// seconds of dead air between the digits, on top of the real `<break>`
+    /// pauses. Measured on a phone number: 11.8 s → 8.0 s, i.e. 3.8 s of the
+    /// utterance was engine padding.
+    ///
+    /// So each chunk is trimmed down to its actual speech, and the only silence in
+    /// the output is the silence we insert deliberately for a `<break>`.
+    private static func trimmed(_ buf: [Int16]) -> ArraySlice<Int16> {
+        // Not exactly zero: the padding carries a little DC/dither noise.
+        let floor: Int32 = 40
+        guard let first = buf.firstIndex(where: { abs(Int32($0)) > floor }),
+              let last  = buf.lastIndex(where:  { abs(Int32($0)) > floor })
+        else { return [] }
+        return buf[first...last]
     }
 
     // MARK: - SSML helpers
