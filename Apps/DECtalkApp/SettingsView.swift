@@ -71,11 +71,44 @@ struct GlobalSliderRow: View {
                 Text("\(value)\(param.unit.isEmpty ? "" : " " + param.unit)")
                     .monospacedDigit().foregroundStyle(.secondary)
             }
+            // The slider below carries the name and value for VoiceOver, so this
+            // visual row would just be read twice.
+            .accessibilityHidden(true)
+
             Slider(
                 value: Binding(get: { Double(value) },
                                set: { value = Int($0.rounded()) }),
-                in: Double(param.range.lowerBound)...Double(param.range.upperBound))
+                in: Double(param.range.lowerBound)...Double(param.range.upperBound),
+                step: Double(param.step))
+                .accessibilityLabel(param.name)
+                .accessibilityValue(param.spokenValue(value))
         }
+    }
+}
+
+extension DECtalkGlobalParameter {
+    /// What VoiceOver should say for a value — the real number and its unit,
+    /// not the percentage-of-range a bare SwiftUI slider announces.
+    func spokenValue(_ value: Int) -> String {
+        Self.spoken(value, unit: unit)
+    }
+
+    static func spoken(_ value: Int, unit: String) -> String {
+        switch unit {
+        case "":    return "\(value)"
+        case "ms":  return "\(value) milliseconds"
+        case "Hz":  return "\(value) hertz"
+        case "dB":  return "\(value) decibels"
+        case "wpm": return "\(value) words per minute"
+        case "%":   return "\(value) percent"
+        default:    return "\(value) \(unit)"
+        }
+    }
+}
+
+extension DECtalkParameter {
+    func spokenValue(_ value: Int) -> String {
+        DECtalkGlobalParameter.spoken(value, unit: unit)
     }
 }
 
@@ -108,12 +141,18 @@ struct VoiceParameterRow: View {
                 Text(overridden ? "\(current)\(param.unit.isEmpty ? "" : " " + param.unit)" : "auto")
                     .monospacedDigit()
                     .foregroundStyle(overridden ? .secondary : .tertiary)
+                    // The toggle announces the name, the slider announces the
+                    // value — this label would be a third redundant stop.
+                    .accessibilityHidden(true)
             }
             Slider(
                 value: Binding(get: { Double(current) },
                                set: { store.settings.setOverride(param.code, Int($0.rounded()), for: speaker) }),
-                in: Double(param.range.lowerBound)...Double(param.range.upperBound))
+                in: Double(param.range.lowerBound)...Double(param.range.upperBound),
+                step: Double(param.step))
             .disabled(!overridden)
+            .accessibilityLabel(param.name)
+            .accessibilityValue(overridden ? param.spokenValue(current) : "auto")
         }
     }
 }

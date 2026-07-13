@@ -21,6 +21,24 @@ public struct DECtalkParameter: Identifiable, Sendable, Hashable {
     public let category: Category
 
     public var id: String { code }
+
+    /// One VoiceOver adjust-swipe moves the slider by exactly this much.
+    /// Without an explicit step, SwiftUI sliders are continuous and VoiceOver
+    /// jumps ~10% of the range per swipe — unusable on a wide range.
+    public var step: Int { DECtalkStep.forSpan(range.count) }
+}
+
+/// Shared step sizing so a VoiceOver swipe is always a sane increment,
+/// no matter how wide the parameter's range is.
+enum DECtalkStep {
+    static func forSpan(_ span: Int) -> Int {
+        switch span {
+        case ...110:  return 1     // 0…100, 0…86  → single units
+        case ...600:  return 5     // 50…400, 75…600
+        case ...1500: return 10
+        default:      return 20    // pauses (~2400), formants (~3000)
+        }
+    }
 }
 
 public extension DECtalkParameter {
@@ -77,6 +95,9 @@ public struct DECtalkGlobalParameter: Identifiable, Sendable {
     public let unit: String
     public let range: ClosedRange<Int>
     public var id: String { key }
+
+    /// See `DECtalkParameter.step` — keeps VoiceOver swipes to sane increments.
+    public var step: Int { DECtalkStep.forSpan(range.count) }
 
     public static let rate          = DECtalkGlobalParameter(key: "rate",          name: "Rate",          unit: "wpm", range: 75...600)
     public static let volume        = DECtalkGlobalParameter(key: "volume",        name: "Volume",        unit: "",    range: 0...99)
