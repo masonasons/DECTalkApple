@@ -24,11 +24,6 @@ public final class DECtalkAudioUnit: AVSpeechSynthesisProviderAudioUnit {
     private var volume: Float32 = 1.0
     private let mutex = DispatchSemaphore(value: 1)
 
-    // VoiceOver sends empty/break-only requests during normal use (spacers,
-    // pauses between elements). Only the very first request is treated as a voice
-    // preview and given a spoken sample; later empty requests stay silent.
-    private var requestCount = 0
-
     // DECtalk emits 11025 Hz; 22050 avoids DAC aliasing (per TGSpeechBox notes).
     private let asbdRate: Double = 22050
 
@@ -106,13 +101,15 @@ public final class DECtalkAudioUnit: AVSpeechSynthesisProviderAudioUnit {
         // Split at <break> boundaries so we can render each spoken segment and
         // join them with REAL silence PCM — DECtalk produces no usable pause for
         // a trailing period, so we insert the silence ourselves.
-        requestCount += 1
-        var segments = Self.segments(from: ssml, honorPauses: settings.honorVoiceOverPauses)
-        if segments.allSatisfy({ $0.text.isEmpty }) && requestCount == 1 {
-            // Only the first empty request is a voice preview — speak a sample.
-            // Later empty requests (spacers/breaks) must NOT insert spoken text.
-            segments = [(text: "This is DECtalk.", silenceMs: 0)]
-        }
+        //
+        // No sample text is injected for an empty request. Gating the injection on
+        // `requestCount == 1` does not hold on iOS: the system instantiates a fresh
+        // audio unit per utterance, so the counter is reset every time and EVERY
+        // empty request looks like the first one — which is why "This is DECtalk"
+        // was spoken after items all through normal VoiceOver use. The system also
+        // supplies real preview text ("Hello! My name is DECtalk Perfect Paul."),
+        // so nothing is lost by never injecting.
+        let segments = Self.segments(from: ssml, honorPauses: settings.honorVoiceOverPauses)
 
         func silence(_ ms: Int) -> [Int16] {
             [Int16](repeating: 0, count: Int(Double(ms) / 1000.0 * synth.sampleRate))
@@ -121,15 +118,17 @@ public final class DECtalkAudioUnit: AVSpeechSynthesisProviderAudioUnit {
         var int16: [Int16] = []
         for seg in segments {
             if !seg.text.isEmpty {
-                int16 += synth.render(seg.text, applying: settings, speaker: speaker)
+                // Trim the engine's own padding off each chunk — see trimmed(_:).
+                int16 += Self.trimmed(synth.render(seg.text, applying: settings, speaker: speaker))
             }
             if seg.silenceMs > 0 {
                 int16 += silence(seg.silenceMs)   // insert the pause exactly where the break is
             }
         }
         // A truly empty utterance still needs a frame so the render block can
-        // complete and VoiceOver advances to the next item.
-        if int16.isEmpty { int16 = silence(10) }
+        // complete and VoiceOver advances to the next item. A short tail also
+        // keeps the last sample from being clipped by the render block.
+        int16 += silence(10)
 
         var floats = [Float32](repeating: 0, count: int16.count)
         int16.withUnsafeBufferPointer { src in
@@ -187,6 +186,29 @@ public final class DECtalkAudioUnit: AVSpeechSynthesisProviderAudioUnit {
             self.mutex.signal()
             return noErr
         }
+    }
+
+    // MARK: - Audio helpers
+
+    /// Strips the silence DECtalk pads onto every render call.
+    ///
+    /// The engine bakes roughly 340 ms of trailing silence into each `render`,
+    /// regardless of what it was asked to say. That is invisible for one long
+    /// utterance, but VoiceOver splits digit strings into one chunk per digit —
+    /// a 10-digit phone number is 10+ render calls, so the padding stacks up into
+    /// seconds of dead air between the digits, on top of the real `<break>`
+    /// pauses. Measured on a phone number: 11.8 s → 8.0 s, i.e. 3.8 s of the
+    /// utterance was engine padding.
+    ///
+    /// So each chunk is trimmed down to its actual speech, and the only silence in
+    /// the output is the silence we insert deliberately for a `<break>`.
+    private static func trimmed(_ buf: [Int16]) -> ArraySlice<Int16> {
+        // Not exactly zero: the padding carries a little DC/dither noise.
+        let floor: Int32 = 40
+        guard let first = buf.firstIndex(where: { abs(Int32($0)) > floor }),
+              let last  = buf.lastIndex(where:  { abs(Int32($0)) > floor })
+        else { return [] }
+        return buf[first...last]
     }
 
     // MARK: - SSML helpers
