@@ -24,11 +24,6 @@ public final class DECtalkAudioUnit: AVSpeechSynthesisProviderAudioUnit {
     private var volume: Float32 = 1.0
     private let mutex = DispatchSemaphore(value: 1)
 
-    // VoiceOver sends empty/break-only requests during normal use (spacers,
-    // pauses between elements). Only the very first request is treated as a voice
-    // preview and given a spoken sample; later empty requests stay silent.
-    private var requestCount = 0
-
     // DECtalk emits 11025 Hz; 22050 avoids DAC aliasing (per TGSpeechBox notes).
     private let asbdRate: Double = 22050
 
@@ -106,13 +101,15 @@ public final class DECtalkAudioUnit: AVSpeechSynthesisProviderAudioUnit {
         // Split at <break> boundaries so we can render each spoken segment and
         // join them with REAL silence PCM — DECtalk produces no usable pause for
         // a trailing period, so we insert the silence ourselves.
-        requestCount += 1
-        var segments = Self.segments(from: ssml, honorPauses: settings.honorVoiceOverPauses)
-        if segments.allSatisfy({ $0.text.isEmpty }) && requestCount == 1 {
-            // Only the first empty request is a voice preview — speak a sample.
-            // Later empty requests (spacers/breaks) must NOT insert spoken text.
-            segments = [(text: "This is DECtalk.", silenceMs: 0)]
-        }
+        //
+        // No sample text is injected for an empty request. Gating the injection on
+        // `requestCount == 1` does not hold on iOS: the system instantiates a fresh
+        // audio unit per utterance, so the counter is reset every time and EVERY
+        // empty request looks like the first one — which is why "This is DECtalk"
+        // was spoken after items all through normal VoiceOver use. The system also
+        // supplies real preview text ("Hello! My name is DECtalk Perfect Paul."),
+        // so nothing is lost by never injecting.
+        let segments = Self.segments(from: ssml, honorPauses: settings.honorVoiceOverPauses)
 
         func silence(_ ms: Int) -> [Int16] {
             [Int16](repeating: 0, count: Int(Double(ms) / 1000.0 * synth.sampleRate))
