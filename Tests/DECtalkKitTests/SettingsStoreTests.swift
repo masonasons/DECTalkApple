@@ -21,14 +21,33 @@ final class SettingsStoreTests: XCTestCase {
         let store = DECtalkSettingsStore(containerURL: dir)
         store.settings.spf = 55
         store.settings.sentencePause = 400
-        store.settings.setOverride("ap", 175, for: .harry)
+        var voice = DECtalkCustomVoice(name: "My Harry", base: .harry)
+        voice.params["ap"] = 175
+        store.saveVoice(voice)
 
         // A fresh load from the same directory must see the saved values —
         // this is exactly how the extension reads what the app wrote.
         let reloaded = DECtalkSettingsStore.load(containerURL: dir)
         XCTAssertEqual(reloaded.spf, 55)
         XCTAssertEqual(reloaded.sentencePause, 400)
-        XCTAssertEqual(reloaded.override("ap", for: .harry), 175)
+        XCTAssertEqual(reloaded.customVoices["My Harry"]?.base, .harry)
+        XCTAssertEqual(reloaded.customVoices["My Harry"]?.params["ap"], 175)
+    }
+
+    func testDtvExportImportRoundTripThroughStore() throws {
+        let store = DECtalkSettingsStore(containerURL: dir)
+        var voice = DECtalkCustomVoice(name: "Exported", base: .betty)
+        voice.params["ap"] = 190
+        store.saveVoice(voice)
+
+        let url = dir.appendingPathComponent("Exported.dtv")
+        try store.exportVoice("Exported", to: url)
+
+        // Importing into a store that already has it dedupes the name.
+        let name = try store.importVoice(from: url)
+        XCTAssertEqual(name, "Exported (2)")
+        XCTAssertEqual(store.settings.customVoices[name]?.params["ap"], 190)
+        XCTAssertEqual(store.settings.customVoices[name]?.base, .betty)
     }
 
     func testResetPersists() {

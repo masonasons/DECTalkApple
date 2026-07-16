@@ -62,7 +62,7 @@ public final class DECtalkAudioUnit: AVSpeechSynthesisProviderAudioUnit {
 
     public override var speechVoices: [AVSpeechSynthesisProviderVoice] {
         get {
-            DECtalkSynthesizer.Speaker.allCases.map { speaker in
+            var voices = DECtalkSynthesizer.Speaker.allCases.map { speaker in
                 let voice = AVSpeechSynthesisProviderVoice(
                     name: "DECtalk \(speaker.displayName)",
                     identifier: "\(Self.identifierPrefix).\(speaker.rawValue)",
@@ -71,6 +71,18 @@ public final class DECtalkAudioUnit: AVSpeechSynthesisProviderAudioUnit {
                 voice.gender = Self.gender(for: speaker)
                 return voice
             }
+            // The user's custom voices (read from the shared settings the app
+            // writes) appear as system voices too, next to the built-ins.
+            for custom in DECtalkSettingsStore.load().sortedCustomVoices {
+                let voice = AVSpeechSynthesisProviderVoice(
+                    name: "DECtalk \(custom.name)",
+                    identifier: Self.customIdentifier(custom.name),
+                    primaryLanguages: ["en-US"],
+                    supportedLanguages: ["en-US"])
+                voice.gender = custom.params["sx"] == 0 ? .female : .male
+                voices.append(voice)
+            }
+            return voices
         }
         set { }
     }
@@ -82,6 +94,39 @@ public final class DECtalkAudioUnit: AVSpeechSynthesisProviderAudioUnit {
         }
     }
 
+    // Custom-voice identifiers encode the name as base64url so spaces/punctuation
+    // don't break the dotted identifier scheme.
+    private static let customMarker = ".custom."
+
+    private static func customIdentifier(_ name: String) -> String {
+        let b64 = Data(name.utf8).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        return "\(identifierPrefix)\(customMarker)\(b64)"
+    }
+
+    private static func customName(fromIdentifier id: String) -> String? {
+        guard let range = id.range(of: customMarker) else { return nil }
+        var b64 = String(id[range.upperBound...])
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        while b64.count % 4 != 0 { b64 += "=" }
+        guard let data = Data(base64Encoded: b64), let name = String(data: data, encoding: .utf8) else { return nil }
+        return name
+    }
+
+    /// Resolve a request's voice identifier to a ``DECtalkVoiceSelection``.
+    private static func selection(for identifier: String, in settings: DECtalkSettings) -> DECtalkVoiceSelection {
+        if let name = customName(fromIdentifier: identifier), settings.customVoices[name] != nil {
+            return .custom(name)
+        }
+        let speaker = identifier.split(separator: ".").last
+            .flatMap { Int($0) }
+            .flatMap { DECtalkSynthesizer.Speaker(rawValue: $0) } ?? .paul
+        return .builtIn(speaker)
+    }
+
     public override var outputBusses: AUAudioUnitBusArray { _outputBusses }
 
     // MARK: - Synthesis
@@ -91,17 +136,16 @@ public final class DECtalkAudioUnit: AVSpeechSynthesisProviderAudioUnit {
             store([0]); return
         }
 
-        // Select the speaker from the trailing index in the voice identifier.
-        let speaker = request.voice.identifier.split(separator: ".").last
-            .flatMap { Int($0) }
-            .flatMap { DECtalkSynthesizer.Speaker(rawValue: $0) } ?? .paul
-
         let ssml = request.ssmlRepresentation
 
-        // Honor the user's shared settings (SPF, pauses, volume, per-voice
+        // Honor the user's shared settings (SPF, pauses, volume, custom-voice
         // parameters), but let VoiceOver's own rate control win via the SSML.
         var settings = DECtalkSettingsStore.load()
         settings.rate = Self.wpm(from: ssml)
+
+        // Resolve the requested voice (a built-in, or one of the user's custom
+        // voices) to the selection the synthesizer renders.
+        let selection = Self.selection(for: request.voice.identifier, in: settings)
 
         // Split at <break> boundaries so we can render each spoken segment and
         // join them with REAL silence PCM — DECtalk produces no usable pause for
@@ -121,7 +165,7 @@ public final class DECtalkAudioUnit: AVSpeechSynthesisProviderAudioUnit {
         var int16: [Int16] = []
         for seg in segments {
             if !seg.text.isEmpty {
-                int16 += synth.render(seg.text, applying: settings, speaker: speaker)
+                int16 += synth.render(seg.text, applying: settings, selection: selection)
             }
             if seg.silenceMs > 0 {
                 int16 += silence(seg.silenceMs)   // insert the pause exactly where the break is

@@ -1,8 +1,9 @@
 import Foundation
 
 /// All DECtalk tunables. Global parameters (rate, volume, SPF, pauses) apply to
-/// every voice; the `[:dv]` voice parameters are stored per speaker so each
-/// voice can be customized independently.
+/// every voice. The `[:dv]` voice parameters are no longer tweaked per built-in
+/// here — voice design happens in the Voice Manager, which stores complete named
+/// ``DECtalkCustomVoice`` definitions in ``customVoices``.
 public struct DECtalkSettings: Codable, Equatable, Sendable {
     // Global (voice-independent)
     public var rate: Int          = 200   // [:rate N]
@@ -15,16 +16,16 @@ public struct DECtalkSettings: Codable, Equatable, Sendable {
     /// into DECtalk `[:slnc N]` silence so pauses between spoken items are kept.
     public var honorVoiceOverPauses: Bool = true
 
-    /// Per-voice `[:dv]` overrides: speaker raw value → (parameter code → value).
-    /// Only present codes are emitted; absent codes keep the speaker's own value.
-    public var voiceOverrides: [Int: [String: Int]] = [:]
+    /// User-designed voices, keyed by name (see the Voice Manager). Shared with
+    /// the extension via the settings file so custom voices are speakable there.
+    public var customVoices: [String: DECtalkCustomVoice] = [:]
 
     public init() {}
 
     // Forgiving decoder: missing keys fall back to defaults, so adding new
     // settings never invalidates a previously-saved file.
     enum CodingKeys: String, CodingKey {
-        case rate, volume, spf, sentencePause, commaPause, honorVoiceOverPauses, voiceOverrides
+        case rate, volume, spf, sentencePause, commaPause, honorVoiceOverPauses, customVoices
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -34,46 +35,52 @@ public struct DECtalkSettings: Codable, Equatable, Sendable {
         sentencePause = try c.decodeIfPresent(Int.self, forKey: .sentencePause) ?? sentencePause
         commaPause = try c.decodeIfPresent(Int.self, forKey: .commaPause) ?? commaPause
         honorVoiceOverPauses = try c.decodeIfPresent(Bool.self, forKey: .honorVoiceOverPauses) ?? honorVoiceOverPauses
-        voiceOverrides = try c.decodeIfPresent([Int: [String: Int]].self, forKey: .voiceOverrides) ?? [:]
+        customVoices = try c.decodeIfPresent([String: DECtalkCustomVoice].self, forKey: .customVoices) ?? [:]
     }
 
-    // MARK: - Per-voice override access
-
-    public func override(_ code: String, for speaker: DECtalkSynthesizer.Speaker) -> Int? {
-        voiceOverrides[speaker.rawValue]?[code]
-    }
-
-    public mutating func setOverride(_ code: String, _ value: Int, for speaker: DECtalkSynthesizer.Speaker) {
-        voiceOverrides[speaker.rawValue, default: [:]][code] = value
-    }
-
-    public mutating func clearOverride(_ code: String, for speaker: DECtalkSynthesizer.Speaker) {
-        voiceOverrides[speaker.rawValue]?[code] = nil
-        if voiceOverrides[speaker.rawValue]?.isEmpty == true {
-            voiceOverrides[speaker.rawValue] = nil
-        }
-    }
-
-    public mutating func clearAllOverrides(for speaker: DECtalkSynthesizer.Speaker) {
-        voiceOverrides[speaker.rawValue] = nil
+    /// Custom voices sorted by name (the order the UI and voice list present).
+    public var sortedCustomVoices: [DECtalkCustomVoice] {
+        customVoices.values.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     // MARK: - Command string
 
-    /// The inline DECtalk command prefix for `speaker`, e.g.
-    /// `[:rate 200][:vo set 72][:spf 100][:pp 0 :cp 0][:dv ap 180 hs 120]`.
-    public func commandPrefix(for speaker: DECtalkSynthesizer.Speaker) -> String {
-        var out = "[:rate \(rate)][:vo set \(volume)][:spf \(spf)]"
-        out += "[:pp \(sentencePause) :cp \(commaPause)]"
+    /// Global inline command prefix shared by every voice:
+    /// `[:rate 200][:vo set 72][:spf 100][:pp 0 :cp 0]`.
+    private var globalPrefix: String {
+        "[:rate \(rate)][:vo set \(volume)][:spf \(spf)][:pp \(sentencePause) :cp \(commaPause)]"
+    }
 
-        if let overrides = voiceOverrides[speaker.rawValue], !overrides.isEmpty {
-            // Emit in catalog order for stable, readable output.
-            let dv = DECtalkParameter.voiceParameters
-                .compactMap { p in overrides[p.code].map { "\(p.code) \($0)" } }
-                .joined(separator: " ")
-            if !dv.isEmpty { out += "[:dv \(dv)]" }
+    /// Command prefix for a stock built-in voice: globals only. The base voice is
+    /// selected through the engine's speaker API, so no `[:dv]` is needed.
+    public func commandPrefix(for speaker: DECtalkSynthesizer.Speaker) -> String {
+        globalPrefix
+    }
+
+    /// Command prefix for a custom voice: globals plus every `[:dv]` parameter
+    /// (a custom voice is fully defined by its parameters — `[:nX]`/the base
+    /// speaker only gives the engine its starting point).
+    public func commandPrefix(for voice: DECtalkCustomVoice) -> String {
+        let dv = DECtalkParameter.voiceParameters
+            .compactMap { p in voice.params[p.code].map { "\(p.code) \($0)" } }
+            .joined(separator: " ")
+        return dv.isEmpty ? globalPrefix : globalPrefix + "[:dv \(dv)]"
+    }
+
+    // MARK: - Voice selection
+
+    /// Resolve a selection to the inline prefix and the base built-in speaker the
+    /// engine should be switched to before rendering.
+    public func resolve(_ selection: DECtalkVoiceSelection) -> (prefix: String, base: DECtalkSynthesizer.Speaker) {
+        switch selection {
+        case .builtIn(let speaker):
+            return (commandPrefix(for: speaker), speaker)
+        case .custom(let name):
+            if let voice = customVoices[name] {
+                return (commandPrefix(for: voice), voice.base)
+            }
+            return (commandPrefix(for: .paul), .paul)   // deleted underfoot → fall back
         }
-        return out
     }
 }
 
@@ -128,5 +135,56 @@ public final class DECtalkSettingsStore: ObservableObject {
 
     public func resetToDefaults() {
         settings = DECtalkSettings()
+    }
+
+    // MARK: - Custom voice management (mirrors the add-on's _voicestore)
+
+    /// Save (or overwrite) a custom voice. Returns the stored name (trimmed).
+    @discardableResult
+    public func saveVoice(_ voice: DECtalkCustomVoice) -> String {
+        var v = voice
+        v.name = v.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !v.name.isEmpty else { return "" }
+        settings.customVoices[v.name] = v
+        return v.name
+    }
+
+    /// Rename `oldName` to the (already-set) name of `voice`, dropping the old
+    /// record. If the name is unchanged this is a plain save.
+    public func renameVoice(from oldName: String, to voice: DECtalkCustomVoice) {
+        let newName = saveVoice(voice)
+        if !newName.isEmpty, oldName != newName {
+            settings.customVoices[oldName] = nil
+        }
+    }
+
+    public func deleteVoice(_ name: String) {
+        settings.customVoices[name] = nil
+    }
+
+    /// A name not already taken (appends " (2)", " (3)", … as the add-on does).
+    public func uniqueName(basedOn name: String) -> String {
+        let base = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Imported voice" : name
+        if settings.customVoices[base] == nil { return base }
+        var n = 2
+        while settings.customVoices["\(base) (\(n))"] != nil { n += 1 }
+        return "\(base) (\(n))"
+    }
+
+    /// Write custom voice `name` to `url` as a `.dtv` file.
+    public func exportVoice(_ name: String, to url: URL) throws {
+        guard let voice = settings.customVoices[name] else {
+            throw DECtalkCustomVoice.VoiceStoreError.notDtv
+        }
+        try voice.dtvData().write(to: url, options: .atomic)
+    }
+
+    /// Import a `.dtv` file, deduplicating its name. Returns the stored name.
+    @discardableResult
+    public func importVoice(from url: URL) throws -> String {
+        let data = try Data(contentsOf: url)
+        var voice = try DECtalkCustomVoice.fromDtv(data)
+        voice.name = uniqueName(basedOn: voice.name)
+        return saveVoice(voice)
     }
 }

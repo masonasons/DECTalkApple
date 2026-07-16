@@ -12,7 +12,7 @@ import DECtalkEngine
 public final class DECtalkSynthesizer: @unchecked Sendable {
 
     /// The nine predefined DECtalk voices.
-    public enum Speaker: Int, CaseIterable, Sendable {
+    public enum Speaker: Int, CaseIterable, Sendable, Codable, Hashable {
         case paul = 0, betty, harry, frank, dennis, kit, ursula, rita, wendy
 
         public var displayName: String {
@@ -116,20 +116,38 @@ public final class DECtalkSynthesizer: @unchecked Sendable {
         return String(String.UnicodeScalarView(out.unicodeScalars.map { $0.isASCII ? $0 : " " }))
     }
 
-    /// Renders `text` with the given settings applied. Selects the base voice,
-    /// then prepends the inline command prefix (rate, volume, SPF, pauses, and
-    /// any per-voice `[:dv]` overrides). Blocks until synthesis completes.
+    /// Renders `text` for a built-in `speaker` with the global settings applied.
+    /// Blocks until synthesis completes.
     public func render(_ text: String, applying settings: DECtalkSettings, speaker: Speaker) -> [Int16] {
-        self.speaker = speaker
-        let prefix = settings.commandPrefix(for: speaker)
-        return render(prefix + " " + text)
+        render(text, applying: settings, selection: .builtIn(speaker))
     }
 
     /// As ``render(_:applying:speaker:)`` but returns a float32 mono buffer.
     public func renderBuffer(_ text: String, applying settings: DECtalkSettings, speaker: Speaker) -> AVAudioPCMBuffer? {
-        self.speaker = speaker
-        let prefix = settings.commandPrefix(for: speaker)
+        renderBuffer(text, applying: settings, selection: .builtIn(speaker))
+    }
+
+    /// Renders `text` for a voice `selection` (built-in or custom): switches the
+    /// engine to the base speaker, then prepends the resolved inline command
+    /// prefix (globals, and every `[:dv]` parameter for a custom voice).
+    public func render(_ text: String, applying settings: DECtalkSettings, selection: DECtalkVoiceSelection) -> [Int16] {
+        let (prefix, base) = settings.resolve(selection)
+        self.speaker = base
+        return render(prefix + " " + text)
+    }
+
+    /// As ``render(_:applying:selection:)`` but returns a float32 mono buffer.
+    public func renderBuffer(_ text: String, applying settings: DECtalkSettings, selection: DECtalkVoiceSelection) -> AVAudioPCMBuffer? {
+        let (prefix, base) = settings.resolve(selection)
+        self.speaker = base
         return renderBuffer(prefix + " " + text)
+    }
+
+    /// Preview a custom voice's raw parameters directly (used by the Voice
+    /// Manager's Test button, so a preview sounds exactly like the saved voice).
+    public func renderBuffer(preview voice: DECtalkCustomVoice, text: String, applying settings: DECtalkSettings) -> AVAudioPCMBuffer? {
+        self.speaker = voice.base
+        return renderBuffer(settings.commandPrefix(for: voice) + " " + text)
     }
 
     /// Synthesizes `text` into a float32 mono `AVAudioPCMBuffer` at ``sampleRate``.

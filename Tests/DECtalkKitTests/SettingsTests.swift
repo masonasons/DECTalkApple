@@ -10,25 +10,56 @@ final class SettingsTests: XCTestCase {
         XCTAssertEqual(p, "[:rate 250][:vo set 80][:spf 90][:pp 300 :cp 120]")
     }
 
-    func testCommandPrefixPerVoiceOverrides() {
-        var s = DECtalkSettings()
-        s.setOverride("ap", 180, for: .harry)
-        s.setOverride("hs", 130, for: .harry)
-        s.setOverride("ap", 250, for: .betty)   // different voice, ignored for harry
-
-        let harry = s.commandPrefix(for: .harry)
-        XCTAssertTrue(harry.contains("[:dv ap 180 hs 130]"), harry)
+    func testBuiltInPrefixIsGlobalsOnly() {
+        // Built-in voices carry no [:dv] — voice design lives in custom voices.
+        let s = DECtalkSettings()
         let paul = s.commandPrefix(for: .paul)
-        XCTAssertFalse(paul.contains("[:dv"), "paul has no overrides: \(paul)")
+        XCTAssertFalse(paul.contains("[:dv"), "built-in should have no [:dv]: \(paul)")
     }
 
-    func testClearOverride() {
+    func testCustomVoicePrefixEmitsAllParams() {
         var s = DECtalkSettings()
-        s.setOverride("ap", 200, for: .paul)
-        XCTAssertEqual(s.override("ap", for: .paul), 200)
-        s.clearOverride("ap", for: .paul)
-        XCTAssertNil(s.override("ap", for: .paul))
-        XCTAssertNil(s.voiceOverrides[DECtalkSynthesizer.Speaker.paul.rawValue])
+        var voice = DECtalkCustomVoice(name: "Deep Paul", base: .paul)
+        voice.params["ap"] = 90
+        voice.params["hs"] = 130
+        s.customVoices[voice.name] = voice
+
+        let (prefix, base) = s.resolve(.custom("Deep Paul"))
+        XCTAssertEqual(base, .paul)
+        XCTAssertTrue(prefix.contains("[:dv "), prefix)
+        XCTAssertTrue(prefix.contains("ap 90"), prefix)
+        XCTAssertTrue(prefix.contains("hs 130"), prefix)
+        // A custom voice is fully defined: every one of the 28 codes is present.
+        for p in DECtalkParameter.voiceParameters {
+            XCTAssertTrue(prefix.contains(" \(p.code) ") || prefix.contains("[:dv \(p.code) "), "missing \(p.code): \(prefix)")
+        }
+    }
+
+    func testCustomVoiceSnapshotsBaseDefaults() {
+        // A new custom voice starts from its base voice's built-in values.
+        let voice = DECtalkCustomVoice(name: "Betty Clone", base: .betty)
+        XCTAssertEqual(voice.params["ap"], 208)
+        XCTAssertEqual(voice.params["sx"], 0)
+        XCTAssertEqual(voice.params.count, 28)
+    }
+
+    func testDtvRoundTrip() throws {
+        var voice = DECtalkCustomVoice(name: "Roundtrip", base: .harry)
+        voice.params["ap"] = 77
+        let data = try voice.dtvData()
+        // Same on-disk shape as the NVDA add-on.
+        let doc = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(doc["format"] as? String, "dectalk-voice")
+        XCTAssertEqual(doc["base"] as? String, "harry")
+        let back = try DECtalkCustomVoice.fromDtv(data)
+        XCTAssertEqual(back.base, .harry)
+        XCTAssertEqual(back.params["ap"], 77)
+        XCTAssertEqual(back.name, "Roundtrip")
+    }
+
+    func testDtvRejectsNonVoiceFile() {
+        let junk = Data("{\"hello\":1}".utf8)
+        XCTAssertThrowsError(try DECtalkCustomVoice.fromDtv(junk))
     }
 
     func testCatalogHasNoInvalidCodes() {
@@ -53,13 +84,17 @@ final class SettingsTests: XCTestCase {
         return best.lag > 0 ? sampleRate / Double(best.lag) : 0
     }
 
-    func testPitchOverrideChangesF0() throws {
+    func testCustomVoicePitchChangesF0() throws {
         let synth = try XCTUnwrap(DECtalkSynthesizer())
-        var low = DECtalkSettings();  low.setOverride("ap", 100, for: .paul)
-        var high = DECtalkSettings(); high.setOverride("ap", 300, for: .paul)
+        var low = DECtalkSettings()
+        var lowVoice = DECtalkCustomVoice(name: "Low", base: .paul); lowVoice.params["ap"] = 100
+        low.customVoices[lowVoice.name] = lowVoice
+        var high = DECtalkSettings()
+        var highVoice = DECtalkCustomVoice(name: "High", base: .paul); highVoice.params["ap"] = 300
+        high.customVoices[highVoice.name] = highVoice
 
-        let lowF0  = f0(synth.render("Testing one two three four.", applying: low,  speaker: .paul), sampleRate: synth.sampleRate)
-        let highF0 = f0(synth.render("Testing one two three four.", applying: high, speaker: .paul), sampleRate: synth.sampleRate)
+        let lowF0  = f0(synth.render("Testing one two three four.", applying: low,  selection: .custom("Low")),  sampleRate: synth.sampleRate)
+        let highF0 = f0(synth.render("Testing one two three four.", applying: high, selection: .custom("High")), sampleRate: synth.sampleRate)
 
         XCTAssertLessThan(lowF0, 170, "low-pitch f0 unexpectedly high: \(lowF0)")
         XCTAssertGreaterThan(highF0, 250, "high-pitch f0 unexpectedly low: \(highF0)")

@@ -70,17 +70,33 @@ The nine voices (Perfect Paul, Beautiful Betty, Huge Harry, …) then appear in
 **System Settings → Accessibility → Spoken Content → System Voice** (macOS) or
 **Settings → Accessibility → Spoken Content / VoiceOver** (iOS).
 
-## Settings
+## Settings & voices
 
-Full DECtalk parameter control, driven by inline commands, **shared between the
-app and the system voice** via an App Group (the extension reads the settings the
-app writes):
+DECtalk control is split the same way as the
+[DECtalk NVDA add-on](https://github.com/masonasons/DECTalkNVDA), and everything
+is **shared between the app and the system voice** via an App Group (the
+extension reads what the app writes):
 
-- **Global (all voices):** Rate `[:rate]`, Volume `[:vo set]`, SPF `[:spf]`,
-  Sentence pause `[:pp]`, Comma pause `[:cp]`, and a "Honor VoiceOver pauses" toggle.
-- **Per-voice `[:dv]` parameters** (28, each speaker customizable): pitch, pitch
-  range, assertiveness, head size, smoothness, richness, breathiness, formants,
-  source gains, and more. Any left on "auto" keep the voice's built-in value.
+- **Settings — global (all voices):** Rate `[:rate]`, Volume `[:vo set]`, SPF
+  `[:spf]`, Sentence pause `[:pp]`, Comma pause `[:cp]`, and a "Honor VoiceOver
+  pauses" toggle.
+- **Voice Manager — custom voices:** rather than a screen full of sliders, you
+  design named **custom voices**. A custom voice is a base built-in plus a value
+  for every one of the 28 `[:dv]` parameters (pitch, pitch range, assertiveness,
+  head size, smoothness, richness, breathiness, formants, source gains, …). Saved
+  voices appear in the app's voice picker and as system voices next to the
+  built-ins, and can be **tested, exported, and imported** as `.dtv` files.
+
+### `.dtv` voice files
+
+The exchange format is identical to the NVDA add-on's, so a voice designed in
+either place loads in the other:
+
+```json
+{ "format": "dectalk-voice", "version": 1,
+  "name": "Deep Paul", "base": "paul",
+  "params": { "ap": 90, "hs": 130, "...": 0 } }
+```
 
 ### VoiceOver pauses
 

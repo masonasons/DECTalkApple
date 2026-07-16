@@ -145,7 +145,10 @@ int dtk_speak(dtk_engine *e, const char *text, dtk_sample_cb cb, void *ctx)
         TextToSpeechAddBuffer(e->handle, &e->buffers[i]);
     }
 
-    TextToSpeechSpeak(e->handle, (LPSTR)text, TTS_FORCE);
+    /* TTS_NORMAL, not TTS_FORCE: FORCE hard-terminates the clause, giving
+     * unpunctuated fragments sentence-final prosody. The Sync() below flushes
+     * pending speech anyway. Matches the DECtalk NVDA add-on's speak path. */
+    TextToSpeechSpeak(e->handle, (LPSTR)text, TTS_NORMAL);
     TextToSpeechSync(e->handle);
 
     /* Drain any buffer still holding samples that never triggered a callback. */
@@ -175,7 +178,7 @@ int dtk_speak_to_wav(dtk_engine *e, const char *path, const char *text)
         return -1;
     if (TextToSpeechOpenWaveOutFile(e->handle, (char *)path, WAVE_FORMAT_1M16) != MMSYSERR_NOERROR)
         return -2;
-    TextToSpeechSpeak(e->handle, (LPSTR)text, TTS_FORCE);
+    TextToSpeechSpeak(e->handle, (LPSTR)text, TTS_NORMAL);   /* see dtk_speak() */
     TextToSpeechSync(e->handle);
     TextToSpeechCloseWaveOutFile(e->handle);
     return 0;

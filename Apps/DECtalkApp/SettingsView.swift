@@ -1,11 +1,11 @@
 import SwiftUI
 import DECtalkKit
 
-/// Full DECtalk control panel: global parameters plus per-voice `[:dv]`
-/// overrides for the currently selected speaker.
+/// Global DECtalk controls: rate, volume, SPF and pauses that apply to every
+/// voice. Per-voice `[:dv]` design now lives in the Voice Manager, so this
+/// screen no longer lists the 28 voice parameters.
 struct SettingsView: View {
     @ObservedObject var store: DECtalkSettingsStore
-    let speaker: DECtalkSynthesizer.Speaker
 
     var body: some View {
         Form {
@@ -22,23 +22,14 @@ struct SettingsView: View {
                 Text("Converts VoiceOver's SSML breaks into DECtalk [:slnc] silence between spoken items.")
             }
 
-            ForEach(DECtalkParameter.Category.allCases, id: \.self) { category in
-                Section("\(speaker.displayName) · \(category.rawValue)") {
-                    ForEach(DECtalkParameter.voiceParameters(in: category)) { param in
-                        VoiceParameterRow(param: param, speaker: speaker, store: store)
-                    }
-                }
-            }
-
             Section {
-                Button("Reset \(speaker.displayName)'s voice") {
-                    store.settings.clearAllOverrides(for: speaker)
-                }
-                Button("Reset all settings", role: .destructive) {
+                Button("Reset all global settings", role: .destructive) {
+                    let voices = store.settings.customVoices   // keep the user's voices
                     store.resetToDefaults()
+                    store.settings.customVoices = voices
                 }
             } footer: {
-                Text("Per-voice parameters left on “auto” keep the voice's built-in value.")
+                Text("Design and manage individual voices in the Voice Manager. This resets only the global sliders above.")
             }
         }
         #if os(macOS)
@@ -79,41 +70,24 @@ struct GlobalSliderRow: View {
     }
 }
 
-/// A per-voice `[:dv]` parameter: a toggle to override the voice's built-in
-/// value, plus a slider that's active only while the override is on.
-struct VoiceParameterRow: View {
+/// A labelled slider for one `[:dv]` voice parameter, editing a raw Int value in
+/// the parameter's engine range. Used by the Voice Manager's editor.
+struct VoiceParameterSlider: View {
     let param: DECtalkParameter
-    let speaker: DECtalkSynthesizer.Speaker
-    @ObservedObject var store: DECtalkSettingsStore
+    @Binding var value: Int
 
     var body: some View {
-        let stored = store.settings.override(param.code, for: speaker)
-        let overridden = stored != nil
-        let current = stored ?? param.neutral
-
         VStack(alignment: .leading, spacing: 2) {
             HStack {
-                Toggle(isOn: Binding(
-                    get: { overridden },
-                    set: { on in
-                        if on { store.settings.setOverride(param.code, current, for: speaker) }
-                        else { store.settings.clearOverride(param.code, for: speaker) }
-                    })) {
-                    Text(param.name)
-                }
-                #if os(macOS)
-                .toggleStyle(.checkbox)
-                #endif
+                Text(param.name)
                 Spacer()
-                Text(overridden ? "\(current)\(param.unit.isEmpty ? "" : " " + param.unit)" : "auto")
-                    .monospacedDigit()
-                    .foregroundStyle(overridden ? .secondary : .tertiary)
+                Text("\(value)\(param.unit.isEmpty ? "" : " " + param.unit)")
+                    .monospacedDigit().foregroundStyle(.secondary)
             }
             Slider(
-                value: Binding(get: { Double(current) },
-                               set: { store.settings.setOverride(param.code, Int($0.rounded()), for: speaker) }),
+                value: Binding(get: { Double(value) },
+                               set: { value = param.clamp(Int($0.rounded())) }),
                 in: Double(param.range.lowerBound)...Double(param.range.upperBound))
-            .disabled(!overridden)
         }
     }
 }
