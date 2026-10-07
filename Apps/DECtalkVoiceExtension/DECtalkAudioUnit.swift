@@ -139,9 +139,11 @@ public final class DECtalkAudioUnit: AVSpeechSynthesisProviderAudioUnit {
         let ssml = request.ssmlRepresentation
 
         // Honor the user's shared settings (SPF, pauses, volume, custom-voice
-        // parameters), but let VoiceOver's own rate control win via the SSML.
+        // parameters), but let VoiceOver's own rate and pitch controls win via
+        // the SSML. Pitch scales the selected voice's average pitch.
         var settings = DECtalkSettingsStore.load()
         settings.rate = Self.wpm(from: ssml)
+        settings.pitchScale = DECtalkSettings.pitchScale(fromSSML: ssml)
 
         // Resolve the requested voice (a built-in, or one of the user's custom
         // voices) to the selection the synthesizer renders.

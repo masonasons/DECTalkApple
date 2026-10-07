@@ -20,6 +20,11 @@ public struct DECtalkSettings: Codable, Equatable, Sendable {
     /// the extension via the settings file so custom voices are speakable there.
     public var customVoices: [String: DECtalkCustomVoice] = [:]
 
+    /// Multiplier on the voice's average pitch (`ap`) for the current utterance.
+    /// The voice extension sets it from VoiceOver's SSML `pitch`; 1.0 keeps the
+    /// voice's own pitch. Never saved — it is not in ``CodingKeys``.
+    public var pitchScale: Double = 1.0
+
     public init() {}
 
     // Forgiving decoder: missing keys fall back to defaults, so adding new
@@ -51,20 +56,63 @@ public struct DECtalkSettings: Codable, Equatable, Sendable {
         "[:rate \(rate)][:vo set \(volume)][:spf \(spf)][:pp \(sentencePause) :cp \(commaPause)]"
     }
 
+    /// `averagePitch` scaled by ``pitchScale`` and clamped to the engine's range.
+    func scaledPitch(_ averagePitch: Int) -> Int {
+        let ap = DECtalkParameter.voiceParameter(code: "ap")!
+        return ap.clamp(Int((Double(averagePitch) * pitchScale).rounded()))
+    }
+
     /// Command prefix for a stock built-in voice: globals only. The base voice is
-    /// selected through the engine's speaker API, so no `[:dv]` is needed.
+    /// selected through the engine's speaker API, so no `[:dv]` is needed unless
+    /// ``pitchScale`` moves the voice's average pitch. Selecting the speaker
+    /// reloads its definition, so the override does not leak into later requests.
     public func commandPrefix(for speaker: DECtalkSynthesizer.Speaker) -> String {
-        globalPrefix
+        guard pitchScale != 1.0, let ap = speaker.builtInParams["ap"] else { return globalPrefix }
+        return globalPrefix + "[:dv ap \(scaledPitch(ap))]"
     }
 
     /// Command prefix for a custom voice: globals plus every `[:dv]` parameter
     /// (a custom voice is fully defined by its parameters — `[:nX]`/the base
     /// speaker only gives the engine its starting point).
     public func commandPrefix(for voice: DECtalkCustomVoice) -> String {
+        var params = voice.params
+        if pitchScale != 1.0, let ap = params["ap"] { params["ap"] = scaledPitch(ap) }
         let dv = DECtalkParameter.voiceParameters
-            .compactMap { p in voice.params[p.code].map { "\(p.code) \($0)" } }
+            .compactMap { p in params[p.code].map { "\(p.code) \($0)" } }
             .joined(separator: " ")
         return dv.isEmpty ? globalPrefix : globalPrefix + "[:dv \(dv)]"
+    }
+
+    /// Map an SSML prosody `pitch` (as VoiceOver sends it) to a ``pitchScale``.
+    /// Accepts keywords, percentages (`120%`, `+20%`, `-15%`), semitones
+    /// (`+2st`) and plain multipliers (`1.2`). Anything else — including
+    /// absolute or relative hertz, which needs the voice's base pitch — is 1.0.
+    public static func pitchScale(fromSSML ssml: String) -> Double {
+        guard let re = try? NSRegularExpression(pattern: #"pitch\s*=\s*["']([^"']+)["']"#, options: [.caseInsensitive]),
+              let m = re.firstMatch(in: ssml, range: NSRange(ssml.startIndex..., in: ssml)),
+              let r = Range(m.range(at: 1), in: ssml) else { return 1.0 }
+        let val = ssml[r].trimmingCharacters(in: .whitespaces).lowercased()
+
+        let scale: Double
+        switch val {
+        case "x-low":              scale = 0.6
+        case "low":                scale = 0.8
+        case "medium", "default":  scale = 1.0
+        case "high":               scale = 1.25
+        case "x-high":             scale = 1.5
+        default:
+            let relative = val.hasPrefix("+") || val.hasPrefix("-")
+            if val.hasSuffix("%"), let n = Double(val.dropLast()) {
+                scale = relative ? 1 + n / 100 : n / 100
+            } else if val.hasSuffix("st"), let n = Double(val.dropLast(2)) {
+                scale = pow(2, n / 12)
+            } else if !relative, let n = Double(val) {
+                scale = n
+            } else {
+                scale = 1.0
+            }
+        }
+        return scale.isFinite && scale > 0 ? min(max(scale, 0.25), 4.0) : 1.0
     }
 
     // MARK: - Voice selection
